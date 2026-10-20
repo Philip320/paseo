@@ -1309,14 +1309,18 @@ class TimelineAssembler {
     state: TimelineMessageState,
     fragments: TimelineFragment[],
   ): AgentTimelineItem[] {
+    let assistantDelta = "",
+      reasoningDelta = "";
     for (const fragment of fragments) {
       if (fragment.kind === "assistant") {
         state.assistantText += fragment.text;
+        assistantDelta += fragment.text;
       } else {
         state.reasoningText += fragment.text;
+        reasoningDelta += fragment.text;
       }
     }
-    return this.emitNewContent(state);
+    return this.emitNewContent(state, assistantDelta, reasoningDelta);
   }
 
   private applyAbsoluteFragments(
@@ -1362,22 +1366,42 @@ class TimelineAssembler {
     return items;
   }
 
-  private emitNewContent(state: TimelineMessageState): AgentTimelineItem[] {
+  private emitNewContent(
+    state: TimelineMessageState,
+    assistantDelta?: string,
+    reasoningDelta?: string,
+  ): AgentTimelineItem[] {
     const items: AgentTimelineItem[] = [];
-    const nextAssistantText = state.assistantText.slice(state.emittedAssistantLength);
+    // Re-slicing cumulative prefixes flattens them and pins each backing string in the timeline.
+    const nextAssistantText =
+      assistantDelta !== undefined &&
+      state.emittedAssistantLength === state.assistantText.length - assistantDelta.length
+        ? assistantDelta
+        : state.assistantText.slice(state.emittedAssistantLength);
     if (
       nextAssistantText.length > 0 &&
       nextAssistantText !== INTERRUPT_TOOL_USE_PLACEHOLDER &&
       !isClaudeTranscriptNoiseText(nextAssistantText)
     ) {
       state.emittedAssistantLength = state.assistantText.length;
-      items.push({ type: "assistant_message", text: nextAssistantText, messageId: state.id });
+      items.push({
+        type: "assistant_message",
+        text: Buffer.from(nextAssistantText, "utf16le").toString("utf16le"),
+        messageId: state.id,
+      });
     }
 
-    const nextReasoningText = state.reasoningText.slice(state.emittedReasoningLength);
+    const nextReasoningText =
+      reasoningDelta !== undefined &&
+      state.emittedReasoningLength === state.reasoningText.length - reasoningDelta.length
+        ? reasoningDelta
+        : state.reasoningText.slice(state.emittedReasoningLength);
     if (nextReasoningText.length > 0) {
       state.emittedReasoningLength = state.reasoningText.length;
-      items.push({ type: "reasoning", text: nextReasoningText });
+      items.push({
+        type: "reasoning",
+        text: Buffer.from(nextReasoningText, "utf16le").toString("utf16le"),
+      });
     }
     return items;
   }
@@ -6377,6 +6401,10 @@ function mapAssistantHistoryBlocksWithMessageId(
 function convertClaudeHistoryEntryPreamble(
   entry: ClaudeHistoryEntry,
 ): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
+  // Request diagnostics contain copies of chat blocks; replaying them revives settled tools.
+  if (entry.type === "api-request-blob") {
+    return { shortCircuit: [] };
+  }
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
     const compactMetadata = readCompactionMetadata(entry);
     return {

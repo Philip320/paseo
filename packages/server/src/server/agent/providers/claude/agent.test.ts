@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -3695,3 +3697,24 @@ describe("Claude question permission notifications", () => {
     expect(request.description).toBeUndefined();
   });
 });
+
+// Use the same post-GC measurement as OpenCode's streamed-text retention regression.
+test.each(["assistant", "reasoning"])(
+  "streamed %s text retains memory proportional to its final length",
+  (kind) => {
+    const fixture = fileURLToPath(
+      new URL("./test-fixtures/stream-text-retention.mjs", import.meta.url),
+    );
+    const output = execFileSync(
+      process.execPath,
+      ["--expose-gc", "--import", "tsx", fixture, "2000", kind, "events"],
+      { encoding: "utf8", timeout: 30000 },
+    );
+    const stats = JSON.parse(output);
+    expect(stats.textCharacters).toBe(192000);
+    expect(stats.timelineRows).toBe(1);
+    expect(stats.assemblerMessagesAfterStop).toBe(0);
+    expect(stats.retainedBytes).toBeLessThan(16 * stats.textCharacters + 8 * 1024 ** 2);
+  },
+  30000,
+);

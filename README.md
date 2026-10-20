@@ -1,3 +1,13 @@
+## Philip320 custom fork
+
+The default custom branch carries the Claude streamed-text memory fix, transcript diagnostic filtering, and the supervisor fatal-OOM recovery fix. The main branch mirrors getpaseo/paseo:main.
+
+[Sync custom fork](https://github.com/Philip320/paseo/actions/workflows/custom-fork-sync.yml) checks upstream daily at 04:17 UTC and can be run manually. It merges upstream without rewriting history, builds the server stack, checks types and lint, and runs the Claude and supervisor regressions before pushing. A conflict or failed check stops publication and leaves the deployed daemon untouched.
+
+The running customized installation still uses the reviewed npm release plus its local portable patch set. Source synchronization does not deploy a release or port the other local modifications. Keep those update gates in place; inspect and retire a patch when upstream has an equivalent tested fix.
+
+---
+
 <p align="center">
   <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
 </p>
