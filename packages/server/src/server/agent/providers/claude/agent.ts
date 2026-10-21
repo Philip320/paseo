@@ -2524,7 +2524,8 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const activeTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
-    if (this.compacting || activeTurnId !== options.expectedTurnId) {
+    // Keep coordination queued during compaction; unavailable would cancel and restart it.
+    if (activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
 
