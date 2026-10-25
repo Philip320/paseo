@@ -1,0 +1,8 @@
+[Unit]
+Description=Merge and verify Paseo upstream on homepc, then publish custom fork
+
+[Service]
+Type=oneshot
+ExecStart=/root/.paseo/patches/sync-paseo-fork.sh
+TimeoutStartSec=45min
+UMask=0077

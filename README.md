@@ -1,3 +1,15 @@
+## Philip320 custom fork
+
+The default custom branch carries the Claude streamed-text memory fix, transcript diagnostic filtering, and the supervisor fatal-OOM recovery fix. The main branch mirrors getpaseo/paseo:main.
+
+[Checked synchronization](scripts/custom-fork-sync.sh) runs daily from the local user timer at 04:17 UTC, with up to ten minutes of jitter. All builds and tests run on homepc. GitHub credentials stay on the invoking host. The matching service and timer files are in scripts/.
+
+Synchronization merges upstream without rewriting custom history, builds the server stack, checks types and lint, and runs the Claude and supervisor regressions. Only a verified candidate is published, updating custom and main atomically. Dirty checkouts, conflicts, failed checks, missing access, or non-fast-forward pushes stop the run without discarding work. Inspect the paseo-fork-sync.service user journal and the maintenance checkout verification.log to repair a stopped sync.
+
+The running customized installation still uses the reviewed npm release plus its local portable patch set. Source synchronization does not deploy a release or port the other local modifications. Keep those update gates in place; inspect and retire a patch when upstream has an equivalent tested fix.
+
+---
+
 <p align="center">
   <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
 </p>

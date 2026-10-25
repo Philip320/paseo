@@ -62,6 +62,58 @@ describe("ClaudeAgentSession persisted history load", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test.each([false, true])(
+    "request diagnostics do not revive settled tools (failed=%s)",
+    async (failed) => {
+      const tool = {
+        type: "tool_use",
+        id: "settled-tool",
+        name: "Bash",
+        input: { command: "echo test" },
+      };
+      const result = {
+        type: "tool_result",
+        tool_use_id: tool.id,
+        content: "test",
+        is_error: failed,
+      };
+      const transcriptRecords = [
+        { type: "assistant", message: { content: [tool] } },
+        { type: "user", message: { content: [result] } },
+        { type: "api-request-blob", message: { content: [tool] } },
+        { type: "api-request-blob", message: { content: [result] } },
+      ];
+      mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+      writeFileSync(
+        transcriptPath(),
+        transcriptRecords.map((record) => JSON.stringify(record)).join("\n") + "\n",
+      );
+      const queryFactory = vi.fn(() => {
+        throw new Error("history must not run a model query");
+      });
+      const client = new ClaudeAgentClient({
+        logger: pino({ level: "silent" }),
+        queryFactory,
+        resolveVersion: async () => "2.1.220",
+      });
+      const session = await client.resumeSession(
+        { provider: "claude", sessionId: SESSION_ID },
+        { cwd },
+      );
+      try {
+        const statuses: string[] = [];
+        for await (const event of session.streamHistory()) {
+          if (event.type === "timeline" && event.item.type === "tool_call")
+            statuses.push(event.item.status);
+        }
+        expect(statuses).toEqual(["running", failed ? "failed" : "completed"]);
+        expect(queryFactory).not.toHaveBeenCalled();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("logs the resolved transcript path when the transcript does not exist", async () => {
     await resume();
 

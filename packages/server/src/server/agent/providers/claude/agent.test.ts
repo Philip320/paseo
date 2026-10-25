@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1146,53 +1148,57 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("pushes a steer into the exact active Claude query without starting another turn", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
-    const events: AgentStreamEvent[] = [];
-    const unsubscribe = session.subscribe((event) => events.push(event));
-    try {
-      const { turnId } = await session.startTurn("first turn");
-      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
-      const iterator = input[Symbol.asyncIterator]();
-      await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
-
-      await expect(
-        session.steerActiveTurn?.("same turn follow-up", {
-          expectedTurnId: turnId,
-          clientMessageId: "steer-client-id",
-        }),
-      ).resolves.toEqual({ status: "accepted" });
-      await expect(iterator.next()).resolves.toMatchObject({
-        value: {
-          type: "user",
-          priority: "next",
-          message: { content: [{ type: "text", text: "same turn follow-up" }] },
-        },
+  test.each([false, true])(
+    "pushes a steer into the exact active Claude query without starting another turn (compacting=%s)",
+    async (compacting) => {
+      const { queryFactory } = createQueryMock();
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
       });
-      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+      const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+      const events: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => events.push(event));
+      try {
+        const { turnId } = await session.startTurn("first turn");
+        (session as unknown as { compacting: boolean }).compacting = compacting;
+        const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+        const iterator = input[Symbol.asyncIterator]();
+        await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
 
-      await expect(
-        session.steerActiveTurn?.("/rewind submitted-message-id", { expectedTurnId: turnId }),
-      ).resolves.toEqual({ status: "unavailable" });
-      let rewindReachedLiveInput = false;
-      void iterator.next().then(() => {
-        rewindReachedLiveInput = true;
-        return undefined;
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(rewindReachedLiveInput).toBe(false);
-    } finally {
-      unsubscribe();
-      await session.close();
-    }
-  });
+        await expect(
+          session.steerActiveTurn?.("same turn follow-up", {
+            expectedTurnId: turnId,
+            clientMessageId: "steer-client-id",
+          }),
+        ).resolves.toEqual({ status: "accepted" });
+        await expect(iterator.next()).resolves.toMatchObject({
+          value: {
+            type: "user",
+            priority: "next",
+            message: { content: [{ type: "text", text: "same turn follow-up" }] },
+          },
+        });
+        expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+
+        await expect(
+          session.steerActiveTurn?.("/rewind submitted-message-id", { expectedTurnId: turnId }),
+        ).resolves.toEqual({ status: "unavailable" });
+        let rewindReachedLiveInput = false;
+        void iterator.next().then(() => {
+          rewindReachedLiveInput = true;
+          return undefined;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(rewindReachedLiveInput).toBe(false);
+      } finally {
+        unsubscribe();
+        await session.close();
+      }
+    },
+  );
 
   test("a human steer supersedes blocking permissions until Claude reads it", async () => {
     const { queryFactory } = createQueryMock();
@@ -4279,3 +4285,23 @@ describe("Claude import descriptor scheduling", () => {
     await expect(later).resolves.toEqual(["later descriptor"]);
   });
 });
+// Use the same post-GC measurement as OpenCode's streamed-text retention regression.
+test.each(["assistant", "reasoning"])(
+  "streamed %s text retains memory proportional to its final length",
+  (kind) => {
+    const fixture = fileURLToPath(
+      new URL("./test-fixtures/stream-text-retention.mjs", import.meta.url),
+    );
+    const output = execFileSync(
+      process.execPath,
+      ["--expose-gc", "--import", "tsx", fixture, "2000", kind, "events"],
+      { encoding: "utf8", timeout: 30000 },
+    );
+    const stats = JSON.parse(output);
+    expect(stats.textCharacters).toBe(192000);
+    expect(stats.timelineRows).toBe(1);
+    expect(stats.assemblerMessagesAfterStop).toBe(0);
+    expect(stats.retainedBytes).toBeLessThan(16 * stats.textCharacters + 8 * 1024 ** 2);
+  },
+  30000,
+);
